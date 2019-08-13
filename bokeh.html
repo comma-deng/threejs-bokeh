@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>three.js webgl - dof blur</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<link type="text/css" rel="stylesheet" href="css/main.css">
+		<style>
+			#error {
+				margin: auto;
+				margin-top: 40px;
+				display: block;
+				max-width: 400px;
+				padding: 20px;
+				background: #CE0808;
+			}
+		</style>
+
+		<script id="post-vert" type="x-shader/x-vertex">
+			varying vec2 vUv;
+
+			void main() {
+				vUv = uv;
+				gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+			}
+		</script>
+		<script id="post-frag" type="x-shader/x-fragment">
+            #include <packing>
+
+                varying vec2 vUv;
+                uniform sampler2D tDiffuse;
+                uniform sampler2D tDepth;
+                uniform float cameraNear;
+                uniform float cameraFar;
+                uniform float focalDepth;
+                uniform float farStart;
+                uniform float farRange;
+                uniform float nearStart;
+                uniform float nearRange;
+                uniform float textureWidth;
+                uniform float textureHeight;
+
+                const int circleSize = 9;
+                
+                float readDepth( sampler2D depthSampler, vec2 coord ) {
+                    float fragCoordZ = texture2D( depthSampler, coord ).x;
+                    float viewZ = perspectiveDepthToViewZ( fragCoordZ, cameraNear, cameraFar );
+                    return viewZ;
+                }
+
+                
+                vec3 getColorBlur(vec2 uv, bool isForeGround){
+                    vec2 curUv;
+                    vec3 color = vec3(0.0, 0.0, 0.0);
+                    vec2 textureRatio = vec2(1.0/textureWidth, 1.0/textureHeight);
+                    int cnt = 0;
+                    for(int i=-circleSize; i<circleSize; i++)
+                        for(int j=-circleSize; j<circleSize; j++)
+                        {
+                            vec2 dir =  vec2(i, j) * textureRatio;
+                            if(length(dir) > float(circleSize))
+                                continue;
+                            curUv = uv + dir;
+                            float depth = readDepth(tDepth, curUv);
+                            if(isForeGround  && (-depth - focalDepth > 0.0))
+                                continue;
+                            if(!isForeGround && (-depth - focalDepth < 0.0))
+                                continue;
+                            
+                            color += texture2D( tDiffuse, curUv ).rgb;
+                            cnt++;
+                        }
+                    return color * (1.0 / float(cnt));
+                }
+                
+                void main() {
+                    vec3 diffuse = texture2D( tDiffuse, vUv ).rgb;
+                    float depth = readDepth( tDepth, vUv );
+                
+                    float depthVal =  -depth - focalDepth;
+                    float blurRatio = 0.0;
+                
+                    if(depthVal < 0.0)
+                    {
+                        blurRatio = (-depthVal - nearStart) / nearRange;
+                    }
+                    else
+                    {
+                        blurRatio = (depthVal - farStart) / farRange;
+                    }
+                
+                    blurRatio = clamp(blurRatio, 0.0, 1.0);
+                    bool isForeGround = depthVal < 0.0; 
+
+                    // foreground and backGound need separate blur
+                    vec3 colorBlur = getColorBlur(vUv, isForeGround);                
+                    vec3 colorMix = mix(diffuse, colorBlur, blurRatio);
+
+                    gl_FragColor.rgb = vec3(colorMix);
+                    gl_FragColor.a = 1.0;
+                }
+		</script>
+
+	</head>
+	<body>
+		<canvas></canvas>
+		<div id="info">
+			<a href="http://threejs.org" target="_blank" rel="noopener">threejs</a> webgl - bokeh<br/>
+			<br/>
+			Created by <a href="https://github.com/comma-deng" target="_blank" rel="noopener">comma</a>.
+
+			<div id="error" style="display: none;">
+			Your browser does not support <strong>WEBGL_depth_texture</strong>.<br/><br/>
+			This demo will not work.
+			</div>
+        </div>
+        
+        <script src="./js/dat.gui.min.js"></script>
+		<script type="module">
+
+			import * as THREE from './js/three.module.js';
+
+			import Stats from './js/stats.module.js';
+
+			import { OrbitControls } from './js/OrbitControls.js';
+
+			var camera, scene, renderer, controls, stats;
+			var target;
+			var postScene, postCamera, postMaterial;
+            var supportsExtension = true;
+            var config = {focalDepth: 5};
+
+            
+			init();
+			animate();
+
+			function init() {
+
+				renderer = new THREE.WebGLRenderer( { canvas: document.querySelector( 'canvas' ) } );
+
+				if ( ! renderer.extensions.get( 'WEBGL_depth_texture' ) ) {
+
+					supportsExtension = false;
+					document.querySelector( '#error' ).style.display = 'block';
+					return;
+				}
+
+				renderer.setPixelRatio( window.devicePixelRatio );
+				renderer.setSize( window.innerWidth, window.innerHeight );
+
+
+				stats = new Stats();
+				document.body.appendChild( stats.dom );
+
+                camera = new THREE.PerspectiveCamera( 70, window.innerWidth / window.innerHeight, 0.01, 50 );
+                window.camera = camera
+				camera.position.z = 4;
+
+				controls = new OrbitControls( camera, renderer.domElement );
+
+				// Create a multi render target with Float buffers
+				target = new THREE.WebGLRenderTarget( window.innerWidth, window.innerHeight );
+				target.texture.format = THREE.RGBFormat;
+				target.texture.minFilter = THREE.NearestFilter;
+				target.texture.magFilter = THREE.NearestFilter;
+				target.texture.generateMipmaps = false;
+				target.stencilBuffer = false;
+				target.depthBuffer = true;
+				target.depthTexture = new THREE.DepthTexture();
+				target.depthTexture.type = THREE.UnsignedShortType;
+
+				// Our scene
+				scene = new THREE.Scene();
+                setupScene();
+                
+
+				// Setup post-processing step
+                setupPost();
+
+                setUpDatGUI();
+                // postMaterial.uniforms.focalDepth.value = 10.0
+
+				onWindowResize();
+				window.addEventListener( 'resize', onWindowResize, false );
+
+            }
+            
+            function setUpDatGUI(){
+                var gui = new dat.GUI();
+                var controller_speed = gui.add(config, 'focalDepth', 5, 20);
+
+                controller_speed.onChange(function(value) {
+                    config.focalDepth = value;
+                    postMaterial.uniforms.focalDepth.value = value;
+                });
+            }
+
+			function setupPost() {
+
+				// Setup post processing stage
+				postCamera = new THREE.OrthographicCamera( - 1, 1, 1, - 1, 0, 1 );
+				postMaterial = new THREE.ShaderMaterial( {
+					vertexShader: document.querySelector( '#post-vert' ).textContent.trim(),
+					fragmentShader: document.querySelector( '#post-frag' ).textContent.trim(),
+					uniforms: {
+						cameraNear: { value: camera.near },
+                        cameraFar: { value: camera.far },
+                        focalDepth: {value: 5.0},
+                        farStart: {value: 2.0},
+                        farRange: {value: 2.0},
+                        nearStart: {value: 1.5},
+                        nearRange: {value: 1.0},
+						tDiffuse: { value: target.texture },
+                        tDepth: { value: target.depthTexture },
+                        textureWidth: {value: window.innerWidth},
+                        textureHeight: {value: window.innerHeight}
+					}
+				} );
+				var postPlane = new THREE.PlaneBufferGeometry( 2, 2 );
+				var postQuad = new THREE.Mesh( postPlane, postMaterial );
+				postScene = new THREE.Scene();
+                postScene.add( postQuad );
+			}
+
+			function setupScene() {
+
+
+                var light = new THREE.PointLight(0xffffff, 5, 1000, 1)
+                light.position.set(0, 10, 0);
+                scene.add(light)
+                var pointLightHelper = new THREE.PointLightHelper(light, 2)
+                scene.add(pointLightHelper)
+                
+
+
+                var hemiLight = new THREE.HemisphereLight( 0xffffff, 0xffffff, 0.6 );
+				hemiLight.color.setHSL( 0.6, 1, 0.6 );
+				hemiLight.groundColor.setHSL( 0.095, 1, 0.75 );
+				hemiLight.position.set( 0, 15, 0 );
+				scene.add( hemiLight );
+				var hemiLightHelper = new THREE.HemisphereLightHelper( hemiLight, 10 );
+				scene.add( hemiLightHelper );
+
+				// Setup some geometries
+                var geometry = new THREE.BoxGeometry(2, 2, 2) //new THREE.TorusKnotBufferGeometry( 1, 0.3, 128, 64 );
+                
+				
+
+				var count = 50;
+				var scale = 5;
+
+				for ( var i = 0; i < count; i ++ ) {
+
+					var r = Math.random() * 2.0 * Math.PI;
+					var z = ( Math.random() * 2.0 ) - 1.0;
+                    var zScale = Math.sqrt( 1.0 - z * z ) * scale;
+                    var material = new THREE.MeshPhongMaterial( { color: Math.random() * 0xffffff } );
+
+					var mesh = new THREE.Mesh( geometry, material );
+					mesh.position.set(
+						Math.cos( r ) * zScale,
+						Math.sin( r ) * zScale,
+						z * scale
+					);
+					mesh.rotation.set( Math.random(), Math.random(), Math.random() );
+					scene.add( mesh );
+
+				}
+
+			}
+
+			function onWindowResize() {
+
+				var aspect = window.innerWidth / window.innerHeight;
+				camera.aspect = aspect;
+				camera.updateProjectionMatrix();
+
+				var dpr = renderer.getPixelRatio();
+				target.setSize( window.innerWidth * dpr, window.innerHeight * dpr );
+				renderer.setSize( window.innerWidth, window.innerHeight );
+
+			}
+
+			function animate() {
+
+				if ( ! supportsExtension ) return;
+
+				requestAnimationFrame( animate );
+
+				// render scene into target
+				renderer.setRenderTarget( target );
+				renderer.render( scene, camera );
+
+				// render post FX
+				renderer.setRenderTarget( null );
+				renderer.render( postScene, postCamera );
+
+				controls.update(); // required because damping is enabled
+
+				stats.update();
+
+			}
+
+		</script>
+
+	</body>
+</html>
