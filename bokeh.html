@@ -16,7 +16,7 @@
 			}
 		</style>
 
-		<script id="post-vert" type="x-shader/x-vertex">
+		<script id="post-vert-2" type="x-shader/x-vertex">
 			varying vec2 vUv;
 
 			void main() {
@@ -24,7 +24,61 @@
 				gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 			}
 		</script>
-		<script id="post-frag" type="x-shader/x-fragment">
+		<script id="post-frag-2" type="x-shader/x-fragment">
+			varying vec2 vUv;
+			uniform sampler2D tColor;
+			uniform float textureWidth;
+			uniform float textureHeight;
+			
+			void main() {
+				vec3 color = vec3(0.0);
+				float coc = 0.0;
+				const int cocBlurSize = 5;
+				float cocBlurSizef = float(cocBlurSize);
+				const int bokehBlurSize = 10;
+				float bokehBlurSizef = float(bokehBlurSize);
+				vec2 textureRatio = vec2(1.0/textureWidth, 1.0/textureHeight);
+
+				// blur the coc
+				for(int i=-cocBlurSize; i<cocBlurSize; i++)
+                        for(int j=-cocBlurSize; j<cocBlurSize; j++)
+                        {
+							vec2 dir =  vec2(i, j) * textureRatio;
+							vec2 curUv = dir + vUv;
+							coc += texture2D(tColor, curUv).a;
+						}
+				coc /= 4.0 * cocBlurSizef * cocBlurSizef;
+				
+				if (coc > 1e-3)
+				{
+					for(int i=-bokehBlurSize; i<bokehBlurSize; i++)
+						for(int j=-bokehBlurSize; j<bokehBlurSize; j++)
+						{
+							vec2 dir = vec2(i, j) * textureRatio;
+							vec2 curUv = dir + vUv;
+							color +=  texture2D(tColor, curUv).rgb;
+						}
+					color /= ( 4.0 * bokehBlurSizef * bokehBlurSizef);
+					gl_FragColor.rgb = color;
+				}
+				else
+				{
+					gl_FragColor.rgb = texture2D( tColor, vUv ).rgb;
+				}
+				//gl_FragColor.rgb = vec3(coc);
+				gl_FragColor.a = 1.0;
+			}
+		</script>
+
+		<script id="post-vert-1" type="x-shader/x-vertex">
+			varying vec2 vUv;
+
+			void main() {
+				vUv = uv;
+				gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+			}
+		</script>
+		<script id="post-frag-1" type="x-shader/x-fragment">
             #include <packing>
 
                 varying vec2 vUv;
@@ -52,7 +106,7 @@
 					return 1.0 - dist/maxDist;
 				}
 
-                vec3 getColorBlur(vec2 uv, bool isForeGround){
+                vec3 getColorBlur(vec2 uv){
                     vec2 curUv;
                     vec3 color = vec3(0.0, 0.0, 0.0);
                     vec2 textureRatio = vec2(1.0/textureWidth, 1.0/textureHeight);
@@ -67,9 +121,9 @@
                                 continue;
                             curUv = uv + dir;
                             float depth = readDepth(tDepth, curUv);
-                            //if(isForeGround  && (-depth - focalDepth > 0.0))
-                            //    continue;
-                            if(!isForeGround && (-depth - focalDepth < 0.0))
+							
+							// background should not mix foregournd in this pass
+                            if((-depth - focalDepth < 0.0))
                             	continue;
 							
 							float weight = getWeight(dist, circleSizef);
@@ -84,26 +138,35 @@
                     float depth = readDepth( tDepth, vUv );
                 
                     float depthVal =  -depth - focalDepth;
-                    float blurRatio = 0.0;
+                    float coc = 0.0;
                 
                     if(depthVal < 0.0)
                     {
-                        blurRatio = (-depthVal - nearStart) / nearRange;
+                        coc = (-depthVal - nearStart) / nearRange;
                     }
                     else
                     {
-                        blurRatio = (depthVal - farStart) / farRange;
+                        coc = (depthVal - farStart) / farRange;
                     }
                 
-                    blurRatio = clamp(blurRatio, 0.0, 1.0);
-                    bool isForeGround = depthVal < 0.0; 
+                    coc = clamp(coc, 0.0, 1.0);
+					bool isForeGround = depthVal < 0.0; 
 
-                    // foreground and backGound need separate blur
-                    vec3 colorBlur = getColorBlur(vUv, isForeGround);                
-                    vec3 colorMix = mix(color, colorBlur, blurRatio);
+					// this shader only handle background.
+					//  "a" channel stores the coc value.
+					if(isForeGround) 
+					{
+						gl_FragColor.rgb = color;
+						gl_FragColor.a = coc;
+					}
+					else
+					{
+						vec3 colorBlur = getColorBlur(vUv);                
+						vec3 colorMix = mix(color, colorBlur, coc);
 
-                    gl_FragColor.rgb = vec3(colorMix);
-                    gl_FragColor.a = 1.0;
+						gl_FragColor.rgb = vec3(colorMix);
+						gl_FragColor.a = 0.0;
+					}
                 }
 		</script>
 
@@ -133,8 +196,8 @@
 			import { FBXLoader } from './js/FBXLoader.js';
 
 			var camera, scene, renderer, controls, stats;
-			var target;
-			var postScene, postCamera, postMaterial;
+			var target1, postScene1, postCamera1, postMaterial1;
+			var target2, postScene2, postCamera2, postMaterial2;
             var supportsExtension = true;
             var config = {focalDepth: 5};
 
@@ -167,15 +230,25 @@
 				controls = new OrbitControls( camera, renderer.domElement );
 
 				// Create a multi render target with Float buffers
-				target = new THREE.WebGLRenderTarget( window.innerWidth, window.innerHeight );
-				target.texture.format = THREE.RGBFormat;
-				target.texture.minFilter = THREE.NearestFilter;
-				target.texture.magFilter = THREE.NearestFilter;
-				target.texture.generateMipmaps = false;
-				target.stencilBuffer = false;
-				target.depthBuffer = true;
-				target.depthTexture = new THREE.DepthTexture();
-				target.depthTexture.type = THREE.UnsignedShortType;
+				target1 = new THREE.WebGLRenderTarget( window.innerWidth, window.innerHeight );
+				target1.texture.format = THREE.RGBFormat;
+				target1.texture.minFilter = THREE.NearestFilter;
+				target1.texture.magFilter = THREE.NearestFilter;
+				target1.texture.generateMipmaps = false;
+				target1.stencilBuffer = false;
+				target1.depthBuffer = true;
+				target1.depthTexture = new THREE.DepthTexture();
+				target1.depthTexture.type = THREE.UnsignedShortType;
+
+				target2 = new THREE.WebGLRenderTarget( window.innerWidth, window.innerHeight );
+				target2.texture.format = THREE.RGBAFormat;
+				target2.texture.minFilter = THREE.NearestFilter;
+				target2.texture.magFilter = THREE.NearestFilter;
+				target2.texture.generateMipmaps = false;
+				target2.stencilBuffer = false;
+				target2.depthBuffer = false;
+
+
 
 				// Our scene
 				scene = new THREE.Scene();
@@ -183,7 +256,10 @@
                 
 
 				// Setup post-processing step
-                setupPost();
+				setupPost1();
+				
+				setupPost2();
+				
 
                 setUpDatGUI();
                 // postMaterial.uniforms.focalDepth.value = 10.0
@@ -199,16 +275,16 @@
 
                 controller_speed.onChange(function(value) {
                     config.focalDepth = value;
-                    postMaterial.uniforms.focalDepth.value = value;
+                    postMaterial1.uniforms.focalDepth.value = value;
                 });
             }
 
-			function setupPost() {
+			function setupPost1() {
 				// Setup post processing stage
-				postCamera = new THREE.OrthographicCamera( - 1, 1, 1, - 1, 0, 1 );
-				postMaterial = new THREE.ShaderMaterial( {
-					vertexShader: document.querySelector( '#post-vert' ).textContent.trim(),
-					fragmentShader: document.querySelector( '#post-frag' ).textContent.trim(),
+				postCamera1 = new THREE.OrthographicCamera( - 1, 1, 1, - 1, 0, 1 );
+				postMaterial1 = new THREE.ShaderMaterial( {
+					vertexShader: document.querySelector( '#post-vert-1' ).textContent.trim(),
+					fragmentShader: document.querySelector( '#post-frag-1' ).textContent.trim(),
 					uniforms: {
 						cameraNear: { value: camera.near },
                         cameraFar: { value: camera.far },
@@ -217,16 +293,34 @@
                         farRange: {value: 3.0},
                         nearStart: {value: 1.0},
                         nearRange: {value: 0.7},
-						tColor: { value: target.texture },
-                        tDepth: { value: target.depthTexture },
+						tColor: { value: target1.texture },
+                        tDepth: { value: target1.depthTexture },
                         textureWidth: {value: window.innerWidth},
                         textureHeight: {value: window.innerHeight}
 					}
 				} );
 				var postPlane = new THREE.PlaneBufferGeometry( 2, 2 );
-				var postQuad = new THREE.Mesh( postPlane, postMaterial );
-				postScene = new THREE.Scene();
-                postScene.add( postQuad );
+				var postQuad = new THREE.Mesh( postPlane, postMaterial1 );
+				postScene1 = new THREE.Scene();
+                postScene1.add( postQuad );
+			}
+
+
+			function setupPost2(){
+				postCamera2 = new THREE.OrthographicCamera( - 1, 1, 1, - 1, 0, 1 );
+				postMaterial2 = new THREE.ShaderMaterial( {
+					vertexShader: document.querySelector( '#post-vert-2' ).textContent.trim(),
+					fragmentShader: document.querySelector( '#post-frag-2' ).textContent.trim(),
+					uniforms: {
+						tColor: { value: target2.texture },
+						textureWidth: {value: window.innerWidth},
+                        textureHeight: {value: window.innerHeight},
+					}
+				} );
+				var postPlane = new THREE.PlaneBufferGeometry( 2, 2 );
+				var postQuad = new THREE.Mesh( postPlane, postMaterial2 );
+				postScene2 = new THREE.Scene();
+                postScene2.add( postQuad );
 			}
 
 			function setupScene() {
@@ -294,7 +388,8 @@
 				camera.updateProjectionMatrix();
 
 				var dpr = renderer.getPixelRatio();
-				target.setSize( window.innerWidth * dpr, window.innerHeight * dpr );
+				target1.setSize( window.innerWidth * dpr, window.innerHeight * dpr );
+				target2.setSize( window.innerWidth * dpr, window.innerHeight * dpr );
 				renderer.setSize( window.innerWidth, window.innerHeight );
 
 			}
@@ -306,12 +401,17 @@
 				requestAnimationFrame( animate );
 
 				// render scene into target
-				renderer.setRenderTarget( target );
+				renderer.setRenderTarget( target1 );
 				renderer.render( scene, camera );
 
 				// render post FX
+				renderer.setRenderTarget( target2 );
+				renderer.render( postScene1, postCamera1 );
+
 				renderer.setRenderTarget( null );
-				renderer.render( postScene, postCamera );
+				renderer.render( postScene2, postCamera2 ) ;
+
+
 
 				controls.update(); // required because damping is enabled
 
