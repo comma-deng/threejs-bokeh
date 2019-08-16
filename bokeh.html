@@ -60,6 +60,8 @@
 						}
 				coc /= cocBlurWeightTotal;
 				float originalCoc = texture2D(tColor, vUv).a;
+
+				// according to https://developer.nvidia.com/gpugems/GPUGems3/gpugems3_ch28.html
 				coc = 2.0 * max(originalCoc, coc) - originalCoc;
 				
 				
@@ -311,7 +313,7 @@
                         cameraFar: { value: camera.far },
                         focalDepth: {value: 5.0},
                         farStart: {value: 2.0},
-                        farRange: {value: 5.0},
+                        farRange: {value: 3.0},
                         nearStart: {value: 1.0},
                         nearRange: {value: 0.7},
 						tColor: { value: target1.texture },
@@ -347,21 +349,21 @@
 			function setupScene() {
 
 
-                var light = new THREE.PointLight(0xffffff, 1, 1000, 1)
-                light.position.set(0, 0, 10);
-                // scene.add(light)
-                var pointLightHelper = new THREE.PointLightHelper(light, 2)
-                scene.add(pointLightHelper)
+                // var light = new THREE.PointLight(0xffffff, 1, 1000, 1)
+                // light.position.set(0, 0, 10);
+                // // scene.add(light)
+                // var pointLightHelper = new THREE.PointLightHelper(light, 2)
+                // scene.add(pointLightHelper)
                 
 
 
-                var hemiLight = new THREE.HemisphereLight( 0xffffff, 0xffffff, 1);
-				hemiLight.color.setHSL( 0.6, 1, 0.6 );
-				hemiLight.groundColor.setHSL( 1, 1, 1 );
-				hemiLight.position.set( 300, 400, 0 );
-				scene.add( hemiLight );
-				var hemiLightHelper = new THREE.HemisphereLightHelper( hemiLight, 10 );
-				scene.add( hemiLightHelper );
+                // var hemiLight = new THREE.HemisphereLight( 0xffffff, 0xffffff, 1);
+				// hemiLight.color.setHSL( 0.6, 1, 0.6 );
+				// hemiLight.groundColor.setHSL( 1, 1, 1 );
+				// hemiLight.position.set( 300, 400, 0 );
+				// scene.add( hemiLight );
+				// var hemiLightHelper = new THREE.HemisphereLightHelper( hemiLight, 10 );
+				// scene.add( hemiLightHelper );
 
 				// Setup some geometries
                 var geometry = new THREE.BoxGeometry(2, 2, 2) //new THREE.TorusKnotBufferGeometry( 1, 0.3, 128, 64 );
@@ -431,8 +433,7 @@
 
 				renderer.setRenderTarget( null );
 				renderer.render( postScene2, postCamera2 ) ;
-
-
+				
 
 				controls.update(); // required because damping is enabled
 
