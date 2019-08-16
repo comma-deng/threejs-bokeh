@@ -16,7 +16,7 @@
 			}
 		</style>
 
-		<script id="post-vert-2" type="x-shader/x-vertex">
+		<script id="post-vert" type="x-shader/x-vertex">
 			varying vec2 vUv;
 
 			void main() {
@@ -24,84 +24,7 @@
 				gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 			}
 		</script>
-		<script id="post-frag-2" type="x-shader/x-fragment">
-			varying vec2 vUv;
-			uniform sampler2D tColor;
-			uniform float textureWidth;
-			uniform float textureHeight;
-
-			float getWeight(float dist, float maxDist){
-				return 1.0 - dist/maxDist;
-			}
-			
-			void main() {
-				vec3 blurColor = vec3(0.0);
-				float coc = 0.0;
-				const int cocBlurSize = 8;
-				float cocBlurSizef = float(cocBlurSize);
-				const int bokehBlurSize = 8;
-				float bokehBlurSizef = float(bokehBlurSize);
-				vec2 textureRatio = vec2(1.0/textureWidth, 1.0/textureHeight);
-				vec3 sourceColor = texture2D(tColor, vUv).rgb;
-
-				// blur the coc
-				float cocBlurWeightTotal = 0.0;
-				for(int i=-cocBlurSize; i<cocBlurSize; i++)
-                        for(int j=-cocBlurSize; j<cocBlurSize; j++)
-                        {
-							vec2 dir =  vec2(i, j) * textureRatio;
-							float dist = length(dir);
-							if(dist > cocBlurSizef)
-								continue;
-							float weight = 1.0; // getWeight(dist, cocBlurSizef);
-							cocBlurWeightTotal += weight;
-							vec2 curUv = dir + vUv;
-							coc += weight * texture2D(tColor, curUv).a;
-						}
-				coc /= cocBlurWeightTotal;
-				float originalCoc = texture2D(tColor, vUv).a;
-
-				// according to https://developer.nvidia.com/gpugems/GPUGems3/gpugems3_ch28.html
-				coc = 2.0 * max(originalCoc, coc) - originalCoc;
-				
-				
-				float bokehBlurWeightTotal = 0.0;
-				if (coc > 1e-5)
-				{
-					for(int i=-bokehBlurSize; i<bokehBlurSize; i++)
-						for(int j=-bokehBlurSize; j<bokehBlurSize; j++)
-						{
-							vec2 dir = vec2(i, j) * textureRatio;  // can optimize
-							float dist = length(dir);
-							if(dist > bokehBlurSizef)
-								continue;
-							vec2 curUv = dir + vUv;
-							float weight = getWeight(dist, bokehBlurSizef); 
-							bokehBlurWeightTotal += weight;
-							blurColor +=  weight * texture2D(tColor, curUv).rgb;
-						}
-					blurColor /= bokehBlurWeightTotal;
-					
-					gl_FragColor.rgb = mix(sourceColor, blurColor, coc);
-				}
-				else
-				{
-					gl_FragColor.rgb = sourceColor;
-				}
-				//gl_FragColor.rgb = vec3(coc);
-				gl_FragColor.a = 1.0;
-			}
-		</script>
-
-		<script id="post-vert-1" type="x-shader/x-vertex">
-			varying vec2 vUv;
-
-			void main() {
-				vUv = uv;
-				gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-			}
-		</script>
-		<script id="post-frag-1" type="x-shader/x-fragment">
+		<script id="post-frag" type="x-shader/x-fragment">
             #include <packing>
 
                 varying vec2 vUv;
@@ -117,7 +40,7 @@
                 uniform float textureWidth;
                 uniform float textureHeight;
 
-                const int circleSize = 7;
+                const int circleSize = 8;
                 
                 float readDepth( sampler2D depthSampler, vec2 coord ) {
                     float fragCoordZ = texture2D( depthSampler, coord ).x;
@@ -145,10 +68,6 @@
                             curUv = uv + dir;
                             float depth = readDepth(tDepth, curUv);
 							
-							// background should not mix foregournd in this pass
-                            if((-depth - focalDepth - farStart < 0.0))
-                            	continue;
-							
 							float weight = getWeight(dist, circleSizef);
                             color += weight * texture2D( tColor, curUv ).rgb;
                             weightTotal += getWeight(dist, circleSizef);
@@ -173,23 +92,12 @@
                     }
                 
                     coc = clamp(coc, 0.0, 1.0);
-					bool isForeGroundOrFocus = -depth - (focalDepth + farStart) < 0.0; 
 
-					// this shader only handle background.
-					//  "a" channel stores the coc value.
-					if(isForeGroundOrFocus) 
-					{
-						gl_FragColor.rgb = color;
-						gl_FragColor.a = coc;
-					}
-					else
-					{
-						vec3 colorBlur = getColorBlur(vUv);                
-						vec3 colorMix = mix(color, colorBlur, coc);
-						gl_FragColor.rgb = vec3(colorMix);
-						
-					}
-					
+                    vec3 colorBlur = getColorBlur(vUv);                
+                    vec3 colorMix = mix(color, colorBlur, coc);
+
+                    gl_FragColor.rgb = vec3(colorMix);
+                    gl_FragColor.a = 1.0;
                 }
 		</script>
 
@@ -219,10 +127,10 @@
 			import { FBXLoader } from './js/FBXLoader.js';
 
 			var camera, scene, renderer, controls, stats;
-			var target1, postScene1, postCamera1, postMaterial1;
-			var target2, postScene2, postCamera2, postMaterial2;
+			var target;
+			var postScene, postCamera, postMaterial;
             var supportsExtension = true;
-            var config = {focalDepth: 7};
+            var config = {focalDepth: 5};
 
             
 			init();
@@ -253,25 +161,15 @@
 				controls = new OrbitControls( camera, renderer.domElement );
 
 				// Create a multi render target with Float buffers
-				target1 = new THREE.WebGLRenderTarget( window.innerWidth, window.innerHeight );
-				target1.texture.format = THREE.RGBFormat;
-				target1.texture.minFilter = THREE.NearestFilter;
-				target1.texture.magFilter = THREE.NearestFilter;
-				target1.texture.generateMipmaps = false;
-				target1.stencilBuffer = false;
-				target1.depthBuffer = true;
-				target1.depthTexture = new THREE.DepthTexture();
-				target1.depthTexture.type = THREE.UnsignedShortType;
-
-				target2 = new THREE.WebGLRenderTarget( window.innerWidth, window.innerHeight );
-				target2.texture.format = THREE.RGBAFormat;
-				target2.texture.minFilter = THREE.NearestFilter;
-				target2.texture.magFilter = THREE.NearestFilter;
-				target2.texture.generateMipmaps = false;
-				target2.stencilBuffer = false;
-				target2.depthBuffer = false;
-
-
+				target = new THREE.WebGLRenderTarget( window.innerWidth, window.innerHeight );
+				target.texture.format = THREE.RGBFormat;
+				target.texture.minFilter = THREE.NearestFilter;
+				target.texture.magFilter = THREE.NearestFilter;
+				target.texture.generateMipmaps = false;
+				target.stencilBuffer = false;
+				target.depthBuffer = true;
+				target.depthTexture = new THREE.DepthTexture();
+				target.depthTexture.type = THREE.UnsignedShortType;
 
 				// Our scene
 				scene = new THREE.Scene();
@@ -279,10 +177,7 @@
                 
 
 				// Setup post-processing step
-				setupPost1();
-				
-				setupPost2();
-				
+                setupPost();
 
                 setUpDatGUI();
                 // postMaterial.uniforms.focalDepth.value = 10.0
@@ -298,72 +193,54 @@
 
                 controller_speed.onChange(function(value) {
                     config.focalDepth = value;
-                    postMaterial1.uniforms.focalDepth.value = value;
+                    postMaterial.uniforms.focalDepth.value = value;
                 });
             }
 
-			function setupPost1() {
+			function setupPost() {
 				// Setup post processing stage
-				postCamera1 = new THREE.OrthographicCamera( - 1, 1, 1, - 1, 0, 1 );
-				postMaterial1 = new THREE.ShaderMaterial( {
-					vertexShader: document.querySelector( '#post-vert-1' ).textContent.trim(),
-					fragmentShader: document.querySelector( '#post-frag-1' ).textContent.trim(),
+				postCamera = new THREE.OrthographicCamera( - 1, 1, 1, - 1, 0, 1 );
+				postMaterial = new THREE.ShaderMaterial( {
+					vertexShader: document.querySelector( '#post-vert' ).textContent.trim(),
+					fragmentShader: document.querySelector( '#post-frag' ).textContent.trim(),
 					uniforms: {
 						cameraNear: { value: camera.near },
                         cameraFar: { value: camera.far },
-                        focalDepth: {value: config.focalDepth},
+                        focalDepth: {value: 5.0},
                         farStart: {value: 2.0},
                         farRange: {value: 3.0},
                         nearStart: {value: 1.0},
                         nearRange: {value: 0.7},
-						tColor: { value: target1.texture },
-                        tDepth: { value: target1.depthTexture },
+						tColor: { value: target.texture },
+                        tDepth: { value: target.depthTexture },
                         textureWidth: {value: window.innerWidth},
                         textureHeight: {value: window.innerHeight}
 					}
 				} );
 				var postPlane = new THREE.PlaneBufferGeometry( 2, 2 );
-				var postQuad = new THREE.Mesh( postPlane, postMaterial1 );
-				postScene1 = new THREE.Scene();
-                postScene1.add( postQuad );
-			}
-
-
-			function setupPost2(){
-				postCamera2 = new THREE.OrthographicCamera( - 1, 1, 1, - 1, 0, 1 );
-				postMaterial2 = new THREE.ShaderMaterial( {
-					vertexShader: document.querySelector( '#post-vert-2' ).textContent.trim(),
-					fragmentShader: document.querySelector( '#post-frag-2' ).textContent.trim(),
-					uniforms: {
-						tColor: { value: target2.texture },
-						textureWidth: {value: window.innerWidth},
-                        textureHeight: {value: window.innerHeight},
-					}
-				} );
-				var postPlane = new THREE.PlaneBufferGeometry( 2, 2 );
-				var postQuad = new THREE.Mesh( postPlane, postMaterial2 );
-				postScene2 = new THREE.Scene();
-                postScene2.add( postQuad );
+				var postQuad = new THREE.Mesh( postPlane, postMaterial );
+				postScene = new THREE.Scene();
+                postScene.add( postQuad );
 			}
 
 			function setupScene() {
 
 
-                // var light = new THREE.PointLight(0xffffff, 1, 1000, 1)
-                // light.position.set(0, 0, 10);
-                // // scene.add(light)
-                // var pointLightHelper = new THREE.PointLightHelper(light, 2)
-                // scene.add(pointLightHelper)
+                var light = new THREE.PointLight(0xffffff, 1, 1000, 1)
+                light.position.set(0, 0, 10);
+                // scene.add(light)
+                var pointLightHelper = new THREE.PointLightHelper(light, 2)
+                scene.add(pointLightHelper)
                 
 
 
-                // var hemiLight = new THREE.HemisphereLight( 0xffffff, 0xffffff, 1);
-				// hemiLight.color.setHSL( 0.6, 1, 0.6 );
-				// hemiLight.groundColor.setHSL( 1, 1, 1 );
-				// hemiLight.position.set( 300, 400, 0 );
-				// scene.add( hemiLight );
-				// var hemiLightHelper = new THREE.HemisphereLightHelper( hemiLight, 10 );
-				// scene.add( hemiLightHelper );
+                var hemiLight = new THREE.HemisphereLight( 0xffffff, 0xffffff, 1);
+				hemiLight.color.setHSL( 0.6, 1, 0.6 );
+				hemiLight.groundColor.setHSL( 1, 1, 1 );
+				hemiLight.position.set( 300, 400, 0 );
+				scene.add( hemiLight );
+				var hemiLightHelper = new THREE.HemisphereLightHelper( hemiLight, 10 );
+				scene.add( hemiLightHelper );
 
 				// Setup some geometries
                 var geometry = new THREE.BoxGeometry(2, 2, 2) //new THREE.TorusKnotBufferGeometry( 1, 0.3, 128, 64 );
@@ -411,8 +288,7 @@
 				camera.updateProjectionMatrix();
 
 				var dpr = renderer.getPixelRatio();
-				target1.setSize( window.innerWidth * dpr, window.innerHeight * dpr );
-				target2.setSize( window.innerWidth * dpr, window.innerHeight * dpr );
+				target.setSize( window.innerWidth * dpr, window.innerHeight * dpr );
 				renderer.setSize( window.innerWidth, window.innerHeight );
 
 			}
@@ -424,16 +300,12 @@
 				requestAnimationFrame( animate );
 
 				// render scene into target
-				renderer.setRenderTarget( target1 );
+				renderer.setRenderTarget( target );
 				renderer.render( scene, camera );
 
 				// render post FX
-				renderer.setRenderTarget( target2 );
-				renderer.render( postScene1, postCamera1 );
-
 				renderer.setRenderTarget( null );
-				renderer.render( postScene2, postCamera2 ) ;
-				
+				renderer.render( postScene, postCamera );
 
 				controls.update(); // required because damping is enabled
 
