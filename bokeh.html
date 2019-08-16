@@ -59,6 +59,8 @@
 							coc += weight * texture2D(tColor, curUv).a;
 						}
 				coc /= cocBlurWeightTotal;
+				float originalCoc = texture2D(tColor, vUv).a;
+				coc = 2.0 * max(originalCoc, coc) - originalCoc;
 				
 				
 				float bokehBlurWeightTotal = 0.0;
@@ -113,7 +115,7 @@
                 uniform float textureWidth;
                 uniform float textureHeight;
 
-                const int circleSize = 8;
+                const int circleSize = 7;
                 
                 float readDepth( sampler2D depthSampler, vec2 coord ) {
                     float fragCoordZ = texture2D( depthSampler, coord ).x;
@@ -309,7 +311,7 @@
                         cameraFar: { value: camera.far },
                         focalDepth: {value: 5.0},
                         farStart: {value: 2.0},
-                        farRange: {value: 3.0},
+                        farRange: {value: 5.0},
                         nearStart: {value: 1.0},
                         nearRange: {value: 0.7},
 						tColor: { value: target1.texture },
