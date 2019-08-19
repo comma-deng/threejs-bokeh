@@ -88,7 +88,6 @@
 				{
 					gl_FragColor.rgb = sourceColor;
 				}
-				//gl_FragColor.rgb = vec3(coc);
 				gl_FragColor.a = 1.0;
 			}
 		</script>
@@ -117,7 +116,7 @@
                 uniform float textureWidth;
                 uniform float textureHeight;
 
-                const int circleSize = 7;
+                const int circleSize = 8;
                 
                 float readDepth( sampler2D depthSampler, vec2 coord ) {
                     float fragCoordZ = texture2D( depthSampler, coord ).x;
@@ -187,7 +186,6 @@
 						vec3 colorBlur = getColorBlur(vUv);                
 						vec3 colorMix = mix(color, colorBlur, coc);
 						gl_FragColor.rgb = vec3(colorMix);
-						
 					}
 					
                 }
@@ -366,9 +364,8 @@
 				// scene.add( hemiLightHelper );
 
 				// Setup some geometries
-                var geometry = new THREE.BoxGeometry(2, 2, 2) //new THREE.TorusKnotBufferGeometry( 1, 0.3, 128, 64 );
-                
-				
+                // var geometry = new THREE.BoxGeometry(2, 2, 2) //new THREE.TorusKnotBufferGeometry( 1, 0.3, 128, 64 );
+					
 
 				// var count = 50;
 				// var scale = 5;
